@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -30,7 +31,19 @@ class LiquidGlassDialogBuilder(
     override fun create(): AlertDialog {
         val dialog = super.create()
         alertDialog = dialog
-        installGlass(dialog)
+        val decor = dialog.window?.decorView
+        if (decor != null) {
+            decor.viewTreeObserver.addOnPreDrawListener(
+                object : ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        decor.viewTreeObserver.takeIf { it.isAlive }
+                            ?.removeOnPreDrawListener(this)
+                        installGlass(dialog)
+                        return glass == null
+                    }
+                }
+            )
+        }
         return dialog
     }
 
