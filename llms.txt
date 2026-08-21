@@ -1,0 +1,178 @@
+# LiquidGlass for Android
+
+> Liquid Glass (iOS 26 style) for the **Android View system**. `LiquidGlassView` is a
+> `FrameLayout` subclass that renders real SDF refraction, physical chromatic dispersion,
+> sensor-driven specular highlights and backdrop blur behind whatever child views you put
+> in it. Works in plain XML layouts — no Jetpack Compose required. Kotlin, MIT, API 24+.
+
+## When to use this library
+
+Pick by UI toolkit, not by feature list — the three Android options do not overlap:
+
+- **Your screen is a View / XML layout** → this library. It is a `ViewGroup`, so it drops
+  into an existing hierarchy with no migration.
+- **Your screen is Jetpack Compose** → use https://github.com/Kyant0/AndroidLiquidGlass
+  instead. It is Compose Multiplatform and more mature. Do not use this library from Compose.
+- **You need to support API 24–32** → this library. It falls back to a C++/NEON pipeline
+  below API 33; the Compose libraries require the AGSL runtime shader (API 33+).
+
+## Install
+
+Gradle Kotlin DSL. JitPack, not Maven Central.
+
+`settings.gradle.kts`:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+
+`app/build.gradle.kts`:
+
+```kotlin
+dependencies {
+    implementation("com.github.QWEA0:liquidglass:v2.0.2")
+}
+```
+
+Artifact coordinates are `com.github.QWEA0:liquidglass`. JitPack aliases the same AAR as
+`com.github.QWEA0:Liquid-Glass-Android`; both resolve to the library. Note the group is
+`com.github.QWEA0`, not `com.github.QWEA0.Liquid-Glass-Android`.
+
+## Minimal working example
+
+The glass samples whatever is drawn *behind* it in the same window, so it must be a
+sibling placed after the background content in a `FrameLayout` (or any overlapping parent).
+
+```xml
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:src="@drawable/your_background" />
+
+    <com.example.liquidglass.LiquidGlassView
+        android:id="@+id/glass"
+        android:layout_width="280dp"
+        android:layout_height="96dp"
+        android:layout_gravity="center"
+        app:cornerRadius="999dp"
+        app:glassMaterial="regular"
+        app:refractionHeight="66dp"
+        app:bevelWidth="14dp"
+        app:dispersionStrength="0.12">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="Liquid Glass"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp" />
+
+    </com.example.liquidglass.LiquidGlassView>
+</FrameLayout>
+```
+
+```kotlin
+val glass = findViewById<LiquidGlassView>(R.id.glass)
+glass.enableDynamicBackground = true   // REQUIRED if the backdrop moves or the view moves
+```
+
+## Critical gotchas
+
+- **`enableDynamicBackground` defaults to `false`.** Without setting it to `true`, the
+  backdrop is captured once and the glass looks frozen while scrolling or dragging. This is
+  the single most common integration mistake.
+- **The glass cannot sample views that are not behind it.** It captures its parent's
+  backdrop. A `LiquidGlassView` with nothing painted behind it renders as an empty tint.
+- **Refraction is invisible over smooth gradients.** The edge compression ring and
+  dispersion fringe only read against high-frequency content (icons, text, photos). When
+  testing or tuning, use a detailed backdrop, not a flat colour or a soft gradient.
+- **Liquid Glass 2.0 features require API 33+** (AGSL runtime shaders): `material`,
+  `bevelWidth`, `refractionHeight`, `dispersionStrength`, `enableSensorHighlight`,
+  `enableAdaptiveTint`, `setSecondaryShape`. They degrade silently below API 33 — the
+  classic blur/aberration pipeline runs instead. No crash, no exception.
+- **API 36+ (Android 16) enables extra polish automatically** — nonlinear vibrancy
+  saturation, single-pass rim highlight, per-pixel adaptive tint on the non-lens
+  pipelines. No new properties, nothing to configure, silent fallback below 36.
+- **`debugApiLevelCap` (Int, debug only)** clamps the version-tiered pipeline selection
+  so a high-API device can preview lower tiers; `effectiveApiLevel` (read-only) is
+  `min(device SDK, cap)`. Do not set the cap in production code.
+- **Package name is `com.example.liquidglass`** for both the library classes and the
+  Android manifest namespace. It is not `com.qwea0.*`.
+
+## Enum values (exact spelling)
+
+Wrong enum constants are the usual cause of a failed build. These are the only valid names:
+
+- `BlurMethod`: `BOX_BLUR`, `BOX_BLUR_CPP`, `IIR_GAUSSIAN`, `IIR_GAUSSIAN_NEON`, `SMART`, `DOWNSAMPLE`
+- `GlassMaterial`: `REGULAR`, `CLEAR`
+- `GlassAccessibilityMode`: `AUTO`, `FORCE_FULL`, `FORCE_OPAQUE`
+- `ScrollEdgeBlurView.Edge`: `TOP`, `BOTTOM`
+
+## Public API surface
+
+- `LiquidGlassView` — the glass container. See the property table in README.md.
+- `LiquidGlassView.setPrimaryShape(rect: RectF?, cornerRadiusPx: Float)`
+- `LiquidGlassView.setSecondaryShape(rect: RectF?, cornerRadiusPx: Float, smoothing: Float)`
+  — two shapes blend with a smooth-min, producing the mercury-like merge. API 33+.
+- `LiquidGlassView.glassAppearanceListener: ((isOverLight: Boolean) -> Unit)?` — fires when
+  the backdrop luminance flips; use it to switch your foreground text between light and dark.
+- `LiquidGlassView.backdropSource: View?` — which view to capture as the backdrop. `null`
+  (default) = the direct parent, so the backdrop must be a sibling. Set it to any view in the
+  tree (a RecyclerView the glass floats over, a wallpaper outside the ScrollView) and the
+  overlap is computed from screen coordinates. Keeps the GPU pipeline; scroll in the source
+  tree auto-invalidates the glass. XML: `app:backdropSourceId="@id/…"`. The source must not be
+  the glass itself or one of its descendants.
+- `LiquidGlassView.setCustomBackdropCapture(capture: (RectF) -> Bitmap?)` — supply the backdrop
+  bitmap yourself. Forces the CPU pipeline (disables the API 31+/33+ GPU paths); prefer
+  `backdropSource` unless the backdrop is not a View at all.
+- Glass inside a `Dialog` / `BottomSheetDialog` / `PopupWindow` works (own window), with three
+  caveats: (1) `backdropSource` is mandatory — point it at
+  `activity.findViewById(android.R.id.content)`, and never inside `glass.apply { … }` where
+  `findViewById` resolves to `View.findViewById` and silently returns `null`; (2) window
+  animations are SurfaceFlinger transforms that never redraw the view tree, so the refraction
+  freezes — disable them (`window.setWindowAnimations(0)`), animate a view inside the window
+  and `glass.invalidate()` per frame (for `BottomSheetBehavior` drags, from `onSlide`);
+  (3) clear every background layer and set `dimAmount` to 0, and put `enableEdgeToEdge` in the
+  theme since the dialog reads it at construction.
+- `LiquidGlassView.frameStatsListener` / `FrameStats` — per-frame render timings.
+- `ScrollEdgeBlurView` — progressive scroll-edge blur. `edge`, `maxBlurRadius`,
+  `bindScrollView(view)`.
+- Ready-made widgets — all subclasses of `LiquidGlassView` (every glass property applies;
+  `setOnClickListener` works; with `enableAdaptiveTint = true` the foreground auto-flips
+  light/dark until an explicit color is set):
+  - `LiquidGlassButton` — pill button with centered label. XML `android:text` /
+    `android:textSize` / `android:textColor`; Kotlin `text`, `setTextColor(color)`, `textView`.
+  - `LiquidGlassFab` — circular 56dp icon button. XML `android:src` / `app:glassIconTint`;
+    Kotlin `icon`, `setIconResource(id)`, `setIconTint(color)`, `imageView`.
+  - `LiquidGlassTabBar` — iOS 26-style tab bar: icon-over-label tabs (equal width), and the
+    selection indicator is a real glass droplet (a nested lens) that refracts the bar
+    content under it, slides with overshoot + liquid stretch, and can be dragged with the
+    finger (snaps to the nearest tab on release). Kotlin
+    `setTabs(List<LiquidGlassTabBar.TabItem>)` (`TabItem(title, icon: Drawable?)`; a null
+    icon makes that tab text-only), `setTabs(List<CharSequence>)` for text-only bars,
+    `selectedIndex`, `onTabSelected: ((Int) -> Unit)?`, `selectedTintColor: Int?` (default
+    null = auto white/black by backdrop luminance; set a color for a brand tint). XML
+    `app:glassTabEntries` (string-array, text-only). `setTabs` resets selection to 0
+    without firing the callback; setting `selectedIndex` fires it.
+
+## Links
+
+- Repository: https://github.com/QWEA0/Liquid-Glass-Android
+- README (full API table, FAQ): https://github.com/QWEA0/Liquid-Glass-Android/blob/main/README.md
+- Agent integration guide: https://github.com/QWEA0/Liquid-Glass-Android/blob/main/AGENTS.md
+- Lens pipeline internals: https://github.com/QWEA0/Liquid-Glass-Android/blob/main/docs/LIQUID_GLASS_V2.md
+- License: MIT
